@@ -1,48 +1,98 @@
-const fs = require("fs");
-const path = require("path");
+require("dotenv").config();
 
-const filePath = path.join(__dirname, "sent-birthdays.json");
+const { google } = require("googleapis");
 
-function loadSentBirthdays() {
-  if (!fs.existsSync(filePath)) {
-    return {};
+function getGoogleAuth() {
+  let credentials;
+
+  if (process.env.GOOGLE_CREDENTIALS) {
+    credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
   }
 
-  const data = fs.readFileSync(filePath, "utf8");
-
-  return JSON.parse(data);
+  return new google.auth.GoogleAuth({
+    ...(credentials
+      ? {
+          credentials,
+        }
+      : {
+          keyFile: "credentials.json",
+        }),
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+  });
 }
 
-function saveSentBirthdays(data) {
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+async function getSheetsClient() {
+  const auth = getGoogleAuth();
+
+  return google.sheets({
+    version: "v4",
+    auth,
+  });
 }
 
-function createBirthdayKey(member) {
+function getTodayString() {
   const today = new Date();
 
   const year = today.getFullYear();
   const month = String(today.getMonth() + 1).padStart(2, "0");
   const day = String(today.getDate()).padStart(2, "0");
 
-  return `${year}-${month}-${day}:${member.email}`;
+  return `${year}-${month}-${day}`;
 }
 
-function hasBeenAnnounced(member) {
-  const sentBirthdays = loadSentBirthdays();
+async function hasBeenAnnounced(member) {
+  const sheets = await getSheetsClient();
 
-  const key = createBirthdayKey(member);
+  const birthdayDate = getTodayString();
 
-  return Boolean(sentBirthdays[key]);
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: process.env.GOOGLE_SHEET_ID,
+    range: "Birthday Announcements!A:E",
+  });
+
+  const rows = response.data.values || [];
+
+  const announcements = rows.slice(1);
+
+  return announcements.some((row) => {
+    const recordedDate = row[0]?.trim();
+    const recordedEmail = row[1]?.trim().toLowerCase();
+
+    return (
+      recordedDate === birthdayDate &&
+      recordedEmail === member.email.toLowerCase()
+    );
+  });
 }
 
-function markAsAnnounced(member) {
-  const sentBirthdays = loadSentBirthdays();
+async function markAsAnnounced(member) {
+  const sheets = await getSheetsClient();
 
-  const key = createBirthdayKey(member);
+  const birthdayDate = getTodayString();
 
-  sentBirthdays[key] = true;
+  const sentAt = new Date().toISOString();
 
-  saveSentBirthdays(sentBirthdays);
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: process.env.GOOGLE_SHEET_ID,
+
+    range: "Birthday Announcements!A:E",
+
+    valueInputOption: "USER_ENTERED",
+
+    requestBody: {
+      values: [
+        [
+          birthdayDate,
+          member.email,
+          member.name,
+          member.telegramUsername || "",
+          sentAt,
+        ],
+      ],
+    },
+  });
+
+  console.log(`Announcement recorded for ${member.name}.`);
 }
 
 module.exports = {

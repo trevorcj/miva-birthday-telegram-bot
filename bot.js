@@ -7,14 +7,13 @@ const sharp = require("sharp");
 const { getMembers } = require("./sheets");
 const { getTodaysBirthdays } = require("./birthdays");
 const { downloadDriveImage } = require("./drive");
+
 const { hasBeenAnnounced, markAsAnnounced } = require("./announcement");
 
 const bot = new Bot(process.env.TELEGRAM_BOT_TOKEN);
 const app = express();
 
 const PORT = process.env.PORT || 3000;
-
-console.log("Starting MIVA Birthday Bot...");
 
 async function checkAndAnnounceBirthdays() {
   console.log("\n========================================");
@@ -38,9 +37,18 @@ async function checkAndAnnounceBirthdays() {
     };
   }
 
-  const pendingBirthdays = birthdays.filter(
-    (member) => !hasBeenAnnounced(member),
-  );
+  // Check each birthday against announcement history in sheets
+  const pendingBirthdays = [];
+
+  for (const member of birthdays) {
+    const alreadyAnnounced = await hasBeenAnnounced(member);
+
+    if (alreadyAnnounced) {
+      console.log(`Already announced: ${member.name}`);
+    } else {
+      pendingBirthdays.push(member);
+    }
+  }
 
   console.log(
     `${pendingBirthdays.length} birthday announcement(s) still pending.`,
@@ -71,20 +79,20 @@ async function checkAndAnnounceBirthdays() {
         `<b>Happy Birthday, ${username}!</b> 🎂🎉\n\n` +
         `Today we celebrate <b>${member.name}</b>! 🥳\n\n` +
         `Everyone at the MIVA Charity & Volunteering Club ` +
-        `wishes you a beautiful birthday and an amazing year ahead. 🥂\n\n` +
+        `wishes you a beautiful birthday and an amazing year ahead 🥂.\n\n` +
         `Have a fantastic day! ❤️`;
 
       if (!member.profilePicture) {
         throw new Error("This member does not have a profile picture.");
       }
 
-      console.log("Downloading photo...");
+      console.log(`Downloading photo for ${member.name}...`);
 
       const originalImage = await downloadDriveImage(member.profilePicture);
 
-      console.log(`Original photo size: ${originalImage.length} bytes`);
+      console.log(`Photo downloaded: ${originalImage.length} bytes`);
 
-      console.log("Compressing photo...");
+      console.log(`Compressing photo for ${member.name}...`);
 
       const compressedImage = await sharp(originalImage)
         .resize({
@@ -99,29 +107,32 @@ async function checkAndAnnounceBirthdays() {
         })
         .toBuffer();
 
-      console.log(`Compressed photo size: ${compressedImage.length} bytes`);
+      console.log(`Compressed photo: ${compressedImage.length} bytes`);
 
-      console.log("Sending Telegram announcement...");
+      console.log(`Sending Telegram photo for ${member.name}...`);
 
       await bot.api.sendPhoto({
         chat_id: process.env.TELEGRAM_GROUP_ID,
+
         photo: new InputFile(compressedImage, {
           filename: `${member.name}.jpg`,
           contentType: "image/jpeg",
         }),
+
         caption,
+
         parse_mode: "HTML",
       });
 
-      console.log(`Announcement sent for ${member.name} ✅`);
+      console.log(`✅ Telegram announcement sent for ${member.name}`);
 
-      markAsAnnounced(member);
+      await markAsAnnounced(member);
 
       console.log(`${member.name} marked as announced. ✅`);
 
       announcedCount++;
     } catch (error) {
-      console.error(`Failed to announce ${member.name} ❌:`, error);
+      console.error(` Failed to announce ${member.name} ❌:`, error);
     }
   }
 
@@ -142,7 +153,7 @@ async function checkAndAnnounceBirthdays() {
 // commands
 
 bot.command("start", (ctx) => {
-  ctx.reply("Hello! 👋\nI'm the MIVA Charity & Volunteering Club bot.");
+  ctx.reply("Hello! 👋 I'm the MIVA Charity & Volunteering Club bot.");
 });
 
 bot.command("whoami", (ctx) => {
@@ -160,22 +171,23 @@ bot.command("chatid", (ctx) => {
   console.log("Chat:", ctx.chat);
 });
 
-// bot.command("testbirthday", async (ctx) => {
-//   try {
-//     await bot.api.sendMessage({
-//       chat_id: process.env.TELEGRAM_GROUP_ID,
-//       text: "🎉🎂 This is a test birthday announcement from the MIVA Charity & Volunteering Club bot!",
-//     });
+bot.command("testbirthday", async (ctx) => {
+  try {
+    await bot.api.sendMessage({
+      chat_id: process.env.TELEGRAM_GROUP_ID,
 
-//     await ctx.reply("Birthday test sent! 🎉");
-//   } catch (error) {
-//     console.error("Test birthday failed:", error);
+      text: "This is a test birthday announcement from the MIVA Charity & Volunteering Club bot! 🎉🎂 ",
+    });
 
-//     await ctx.reply(
-//       `Test birthday failed ❌.\n\n${error.message || "Unknown error"}`,
-//     );
-//   }
-// });
+    await ctx.reply("Birthday test sent! 🎉");
+  } catch (error) {
+    console.error("Test birthday failed:", error);
+
+    await ctx.reply(
+      `Test birthday failed ❌.\n\n${error.message || "Unknown error"}`,
+    );
+  }
+});
 
 bot.command("checkbirthdays", async (ctx) => {
   try {
@@ -205,7 +217,7 @@ bot.command("checkbirthdays", async (ctx) => {
   }
 });
 
-// express server
+// express
 
 app.get("/", (req, res) => {
   res.json({
@@ -214,8 +226,7 @@ app.get("/", (req, res) => {
   });
 });
 
-// cron
-
+// cron endpoint
 app.get("/check-birthdays", async (req, res) => {
   try {
     const cronSecret = req.query.key;
@@ -227,7 +238,7 @@ app.get("/check-birthdays", async (req, res) => {
       });
     }
 
-    console.log("\n⏰ Birthday check triggered by cron.");
+    console.log("\nBirthday check triggered by cron. ⏰");
 
     const result = await checkAndAnnounceBirthdays();
 
@@ -246,7 +257,7 @@ app.get("/check-birthdays", async (req, res) => {
   }
 });
 
-// Start
+// start
 
 app.listen(PORT, () => {
   console.log(`HTTP server running on port ${PORT}`);
