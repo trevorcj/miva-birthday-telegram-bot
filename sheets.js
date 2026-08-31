@@ -84,8 +84,7 @@ async function getMembers() {
     })
     .filter((member) => member.email);
 
-  // Remove duplicate submissions.
-  // The latest submission for an email wins.
+  // remove duplicate submissions
   const uniqueMembers = new Map();
 
   for (const member of members) {

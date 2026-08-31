@@ -16,10 +16,6 @@ const PORT = process.env.PORT || 3000;
 
 console.log("Starting MIVA Birthday Bot...");
 
-// ========================================
-// CHECK AND ANNOUNCE BIRTHDAYS
-// ========================================
-
 async function checkAndAnnounceBirthdays() {
   console.log("\n========================================");
   console.log("CHECKING BIRTHDAYS");
@@ -72,10 +68,10 @@ async function checkAndAnnounceBirthdays() {
         : member.name;
 
       const caption =
-        `🎉 <b>Happy Birthday, ${username}!</b> 🎂\n\n` +
+        `<b>Happy Birthday, ${username}!</b> 🎂🎉\n\n` +
         `Today we celebrate <b>${member.name}</b>! 🥳\n\n` +
         `Everyone at the MIVA Charity & Volunteering Club ` +
-        `wishes you a beautiful birthday and an amazing year ahead.\n\n` +
+        `wishes you a beautiful birthday and an amazing year ahead. 🥂\n\n` +
         `Have a fantastic day! ❤️`;
 
       if (!member.profilePicture) {
@@ -117,15 +113,15 @@ async function checkAndAnnounceBirthdays() {
         parse_mode: "HTML",
       });
 
-      console.log(`✅ Announcement sent for ${member.name}`);
+      console.log(`Announcement sent for ${member.name} ✅`);
 
       markAsAnnounced(member);
 
-      console.log(`✅ ${member.name} marked as announced.`);
+      console.log(`${member.name} marked as announced. ✅`);
 
       announcedCount++;
     } catch (error) {
-      console.error(`❌ Failed to announce ${member.name}:`, error);
+      console.error(`Failed to announce ${member.name} ❌:`, error);
     }
   }
 
@@ -143,12 +139,10 @@ async function checkAndAnnounceBirthdays() {
   };
 }
 
-// ========================================
-// TELEGRAM COMMANDS
-// ========================================
+// commands
 
 bot.command("start", (ctx) => {
-  ctx.reply("Hello! 👋 I'm the MIVA Charity & Volunteering Club bot.");
+  ctx.reply("Hello! 👋\nI'm the MIVA Charity & Volunteering Club bot.");
 });
 
 bot.command("whoami", (ctx) => {
@@ -166,22 +160,22 @@ bot.command("chatid", (ctx) => {
   console.log("Chat:", ctx.chat);
 });
 
-bot.command("testbirthday", async (ctx) => {
-  try {
-    await bot.api.sendMessage({
-      chat_id: process.env.TELEGRAM_GROUP_ID,
-      text: "🎉🎂 This is a test birthday announcement from the MIVA Charity & Volunteering Club bot!",
-    });
+// bot.command("testbirthday", async (ctx) => {
+//   try {
+//     await bot.api.sendMessage({
+//       chat_id: process.env.TELEGRAM_GROUP_ID,
+//       text: "🎉🎂 This is a test birthday announcement from the MIVA Charity & Volunteering Club bot!",
+//     });
 
-    await ctx.reply("Birthday test sent! 🎉");
-  } catch (error) {
-    console.error("Test birthday failed:", error);
+//     await ctx.reply("Birthday test sent! 🎉");
+//   } catch (error) {
+//     console.error("Test birthday failed:", error);
 
-    await ctx.reply(
-      `❌ Test birthday failed.\n\n${error.message || "Unknown error"}`,
-    );
-  }
-});
+//     await ctx.reply(
+//       `Test birthday failed ❌.\n\n${error.message || "Unknown error"}`,
+//     );
+//   }
+// });
 
 bot.command("checkbirthdays", async (ctx) => {
   try {
@@ -211,9 +205,7 @@ bot.command("checkbirthdays", async (ctx) => {
   }
 });
 
-// ========================================
-// EXPRESS SERVER
-// ========================================
+// express server
 
 app.get("/", (req, res) => {
   res.json({
@@ -222,9 +214,7 @@ app.get("/", (req, res) => {
   });
 });
 
-// ========================================
-// CRON ENDPOINT
-// ========================================
+// cron
 
 app.get("/check-birthdays", async (req, res) => {
   try {
@@ -256,9 +246,7 @@ app.get("/check-birthdays", async (req, res) => {
   }
 });
 
-// ========================================
-// START EVERYTHING
-// ========================================
+// Start
 
 app.listen(PORT, () => {
   console.log(`HTTP server running on port ${PORT}`);
