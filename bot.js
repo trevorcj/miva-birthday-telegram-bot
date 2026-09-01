@@ -7,13 +7,16 @@ const sharp = require("sharp");
 const { getMembers } = require("./sheets");
 const { getTodaysBirthdays } = require("./birthdays");
 const { downloadDriveImage } = require("./drive");
-
 const { hasBeenAnnounced, markAsAnnounced } = require("./announcement");
 
 const bot = new Bot(process.env.TELEGRAM_BOT_TOKEN);
 const app = express();
 
 const PORT = process.env.PORT || 3000;
+
+let birthdayCheckRunning = false;
+
+// checks today's birthdays and announces them in the Telegram group
 
 async function checkAndAnnounceBirthdays() {
   console.log("\n========================================");
@@ -37,7 +40,6 @@ async function checkAndAnnounceBirthdays() {
     };
   }
 
-  // Check each birthday against announcement history in sheets
   const pendingBirthdays = [];
 
   for (const member of birthdays) {
@@ -76,7 +78,7 @@ async function checkAndAnnounceBirthdays() {
         : member.name;
 
       const caption =
-        `<b>Happy Birthday, ${username}!</b> 🎂🎉\n\n` +
+        `<b>Happy Birthday, ${username}! 🎂🎉</b>\n\n` +
         `Today we celebrate <b>${member.name}</b>! 🥳\n\n` +
         `Everyone at the MIVA Charity & Volunteering Club ` +
         `wishes you a beautiful birthday and an amazing year ahead 🥂.\n\n` +
@@ -113,26 +115,23 @@ async function checkAndAnnounceBirthdays() {
 
       await bot.api.sendPhoto({
         chat_id: process.env.TELEGRAM_GROUP_ID,
-
         photo: new InputFile(compressedImage, {
           filename: `${member.name}.jpg`,
           contentType: "image/jpeg",
         }),
-
         caption,
-
         parse_mode: "HTML",
       });
 
-      console.log(`✅ Telegram announcement sent for ${member.name}`);
+      console.log(`Telegram announcement sent for ${member.name} ✅`);
 
       await markAsAnnounced(member);
 
-      console.log(`${member.name} marked as announced. ✅`);
+      console.log(`${member.name} marked as announced ✅`);
 
       announcedCount++;
     } catch (error) {
-      console.error(` Failed to announce ${member.name} ❌:`, error);
+      console.error(`Failed to announce ${member.name} ❌:`, error);
     }
   }
 
@@ -152,21 +151,21 @@ async function checkAndAnnounceBirthdays() {
 
 // commands
 
-bot.command("start", (ctx) => {
-  ctx.reply("Hello! 👋 I'm the MIVA Charity & Volunteering Club bot.");
+bot.command("start", async (ctx) => {
+  await ctx.reply("Hello! 👋 I'm the MIVA Charity & Volunteering Club bot.");
 });
 
-bot.command("whoami", (ctx) => {
+bot.command("whoami", async (ctx) => {
   console.log(ctx.from);
 
-  ctx.reply(
+  await ctx.reply(
     `Your Telegram ID is: ${ctx.from.id}\n` +
       `Your username is: @${ctx.from.username || "none"}`,
   );
 });
 
-bot.command("chatid", (ctx) => {
-  ctx.reply(`This chat's ID is: ${ctx.chat.id}`);
+bot.command("chatid", async (ctx) => {
+  await ctx.reply(`This chat's ID is: ${ctx.chat.id}`);
 
   console.log("Chat:", ctx.chat);
 });
@@ -175,8 +174,9 @@ bot.command("testbirthday", async (ctx) => {
   try {
     await bot.api.sendMessage({
       chat_id: process.env.TELEGRAM_GROUP_ID,
-
-      text: "This is a test birthday announcement from the MIVA Charity & Volunteering Club bot! 🎉🎂 ",
+      text:
+        "This is a test birthday announcement from the " +
+        "MIVA Charity & Volunteering Club bot! 🎉🎂",
     });
 
     await ctx.reply("Birthday test sent! 🎉");
@@ -190,12 +190,19 @@ bot.command("testbirthday", async (ctx) => {
 });
 
 bot.command("checkbirthdays", async (ctx) => {
+  if (birthdayCheckRunning) {
+    await ctx.reply("A birthday check is already running. Please wait. ⏳");
+
+    return;
+  }
+
+  birthdayCheckRunning = true;
+
   try {
     const result = await checkAndAnnounceBirthdays();
 
     if (result.found === 0) {
       await ctx.reply("There are no birthdays today. 🎂");
-
       return;
     }
 
@@ -203,7 +210,6 @@ bot.command("checkbirthdays", async (ctx) => {
       await ctx.reply(
         "Today's birthday announcements have already been sent. 🎉",
       );
-
       return;
     }
 
@@ -214,50 +220,56 @@ bot.command("checkbirthdays", async (ctx) => {
     console.error("Manual birthday check failed:", error);
 
     await ctx.reply("Sorry, I couldn't check the birthdays right now.");
+  } finally {
+    birthdayCheckRunning = false;
   }
 });
 
-// express
+// express server
 
 app.get("/", (req, res) => {
-  res.json({
-    status: "ok",
-    message: "MIVA Birthday Bot is running.",
-  });
+  res.status(200).send("MIVA Birthday Bot is running.");
 });
 
-// cron endpoint
+// cron endpoints
+
 app.get("/check-birthdays", async (req, res) => {
+  const cronSecret = req.query.key;
+
+  if (!cronSecret || cronSecret !== process.env.CRON_SECRET) {
+    console.warn("Unauthorized cron request.");
+
+    return res.status(401).send("Unauthorized.");
+  }
+
+  if (birthdayCheckRunning) {
+    console.log("Birthday check already running.");
+
+    return res.status(200).send("Birthday check already running.");
+  }
+
+  birthdayCheckRunning = true;
+
   try {
-    const cronSecret = req.query.key;
-
-    if (!cronSecret || cronSecret !== process.env.CRON_SECRET) {
-      return res.status(401).json({
-        success: false,
-        message: "Unauthorized.",
-      });
-    }
-
     console.log("\nBirthday check triggered by cron. ⏰");
 
     const result = await checkAndAnnounceBirthdays();
 
-    return res.json({
-      success: true,
-      found: result.found,
-      announced: result.announced,
-    });
+    console.log(
+      `Cron job complete. Found: ${result.found}, Announced: ${result.announced}`,
+    );
+
+    return res.status(200).send("OK");
   } catch (error) {
     console.error("Cron birthday check failed:", error);
 
-    return res.status(500).json({
-      success: false,
-      message: "Birthday check failed.",
-    });
+    return res.status(500).send("Birthday check failed.");
+  } finally {
+    birthdayCheckRunning = false;
   }
 });
 
-// start
+// start server
 
 app.listen(PORT, () => {
   console.log(`HTTP server running on port ${PORT}`);

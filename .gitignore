@@ -3,3 +3,4 @@ node_modules/
 credentials.json
 sent-birthdays.json
 .DS_Store
+files.txt
