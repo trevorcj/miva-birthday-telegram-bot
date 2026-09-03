@@ -275,6 +275,13 @@ app.listen(PORT, () => {
   console.log(`HTTP server running on port ${PORT}`);
 });
 
+bot.on("message", (msg) => {
+  if (msg.chat.type === "group" || msg.chat.type === "supergroup") {
+    console.log("GROUP ID:", msg.chat.id);
+    console.log("GROUP NAME:", msg.chat.title);
+  }
+});
+
 bot.startPolling();
 
 console.log("Telegram bot polling started.");
