@@ -2,6 +2,8 @@ require("dotenv").config();
 
 const { google } = require("googleapis");
 
+const DELIVERY_ATTEMPTS_SHEET = "Birthday Delivery Attempts";
+
 function getGoogleAuth() {
   let credentials;
 
@@ -95,7 +97,78 @@ async function markAsAnnounced(member) {
   console.log(`Announcement recorded for ${member.name}.`);
 }
 
+async function ensureDeliveryAttemptsSheet(sheets) {
+  const spreadsheet = await sheets.spreadsheets.get({
+    spreadsheetId: process.env.GOOGLE_SHEET_ID,
+    fields: "sheets.properties",
+  });
+
+  const exists = spreadsheet.data.sheets?.some(
+    (sheet) => sheet.properties?.title === DELIVERY_ATTEMPTS_SHEET,
+  );
+
+  if (exists) {
+    return;
+  }
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: process.env.GOOGLE_SHEET_ID,
+    requestBody: {
+      requests: [
+        { addSheet: { properties: { title: DELIVERY_ATTEMPTS_SHEET } } },
+      ],
+    },
+  });
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: process.env.GOOGLE_SHEET_ID,
+    range: `${DELIVERY_ATTEMPTS_SHEET}!A1:H1`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [
+        [
+          "Date",
+          "Email",
+          "Name",
+          "Status",
+          "Phase",
+          "Attempted At",
+          "Telegram Message ID",
+          "Error",
+        ],
+      ],
+    },
+  });
+}
+
+async function recordDeliveryAttempt(member, status, phase, details = {}) {
+  const sheets = await getSheetsClient();
+
+  await ensureDeliveryAttemptsSheet(sheets);
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: process.env.GOOGLE_SHEET_ID,
+    range: `${DELIVERY_ATTEMPTS_SHEET}!A:H`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [
+        [
+          getTodayString(),
+          member.email,
+          member.name,
+          status,
+          phase,
+          new Date().toISOString(),
+          details.telegramMessageId || "",
+          details.error || "",
+        ],
+      ],
+    },
+  });
+}
+
 module.exports = {
   hasBeenAnnounced,
   markAsAnnounced,
+  recordDeliveryAttempt,
 };
