@@ -130,8 +130,10 @@ This is useful when collecting an administrator's Telegram ID.
 
 ## `/chatid`
 
-Requires an administrator's private chat with the bot and returns the ID of
-that private chat.
+Requires an administrator. It returns the ID in a private chat or a
+non-production test group, but is silently ignored in the production school
+group. This makes it safe to run in the separate test group when obtaining
+`TELEGRAM_TEST_CHAT_ID`.
 
 ```text
 /chatid

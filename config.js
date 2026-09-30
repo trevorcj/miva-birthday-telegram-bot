@@ -15,6 +15,10 @@ function isPrivateChat(chat) {
   return chat?.type === "private";
 }
 
+function isProductionChat(chatId, productionGroupId) {
+  return String(chatId) === String(productionGroupId);
+}
+
 function isEnabled(value) {
   return value === "true";
 }
@@ -35,4 +39,5 @@ module.exports = {
   isAdminUser,
   isEnabled,
   isPrivateChat,
+  isProductionChat,
 };

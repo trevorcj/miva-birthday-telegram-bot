@@ -13,6 +13,7 @@ const {
   isAdminUser,
   isEnabled,
   isPrivateChat,
+  isProductionChat,
 } = require("./config");
 
 const bot = new Bot(process.env.TELEGRAM_BOT_TOKEN);
@@ -29,7 +30,7 @@ let lastBirthdayCheck = {
 };
 
 function isProductionGroup(chatId) {
-  return String(chatId) === String(process.env.TELEGRAM_GROUP_ID);
+  return isProductionChat(chatId, process.env.TELEGRAM_GROUP_ID);
 }
 
 async function requirePrivateAdmin(ctx) {
@@ -218,13 +219,25 @@ bot.command("whoami", async (ctx) => {
 });
 
 bot.command("chatid", async (ctx) => {
-  if (!(await requirePrivateAdmin(ctx))) {
+  if (isProductionGroup(ctx.chat?.id)) {
+    console.warn("Ignored a chat ID request in the production group.");
+
+    return;
+  }
+
+  if (!isAdminUser(ctx.from?.id)) {
+    console.warn(`Unauthorized chat ID request from Telegram user ${ctx.from?.id}.`);
+
+    if (isPrivateChat(ctx.chat)) {
+      await ctx.reply("You are not authorized to use this command.");
+    }
+
     return;
   }
 
   await ctx.reply(`This chat's ID is: ${ctx.chat.id}`);
 
-  console.log("Chat:", ctx.chat);
+  console.log("Non-production chat ID requested.");
 });
 
 bot.command("testbirthday", async (ctx) => {
