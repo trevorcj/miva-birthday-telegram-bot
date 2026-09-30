@@ -7,7 +7,12 @@ const sharp = require("sharp");
 const { getMembers } = require("./sheets");
 const { getTodaysBirthdays } = require("./birthdays");
 const { downloadDriveImage } = require("./drive");
-const { hasBeenAnnounced, markAsAnnounced } = require("./announcement");
+const {
+  hasBeenAnnounced,
+  markAsAnnounced,
+  recordDeliveryAttempt,
+} = require("./announcement");
+const { retryOperation } = require("./retry");
 const {
   getBearerToken,
   isAdminUser,
@@ -67,7 +72,9 @@ async function checkAndAnnounceBirthdays() {
   console.log("CHECKING BIRTHDAYS");
   console.log("========================================");
 
-  const members = await getMembers();
+  const members = await retryOperation("Loading members from Google Sheets", () =>
+    getMembers(),
+  );
 
   console.log(`Loaded ${members.length} unique member(s).`);
 
@@ -87,7 +94,10 @@ async function checkAndAnnounceBirthdays() {
   const pendingBirthdays = [];
 
   for (const member of birthdays) {
-    const alreadyAnnounced = await hasBeenAnnounced(member);
+    const alreadyAnnounced = await retryOperation(
+      `Checking announcement history for ${member.name}`,
+      () => hasBeenAnnounced(member),
+    );
 
     if (alreadyAnnounced) {
       console.log(`Already announced: ${member.name}`);
@@ -116,6 +126,8 @@ async function checkAndAnnounceBirthdays() {
     console.log(`Processing: ${member.name}`);
     console.log("----------------------------------------");
 
+    let telegramMessage;
+
     try {
       const username = member.telegramUsername
         ? `@${member.telegramUsername}`
@@ -134,7 +146,10 @@ async function checkAndAnnounceBirthdays() {
 
       console.log(`Downloading photo for ${member.name}...`);
 
-      const originalImage = await downloadDriveImage(member.profilePicture);
+      const originalImage = await retryOperation(
+        `Downloading photo for ${member.name}`,
+        () => downloadDriveImage(member.profilePicture),
+      );
 
       console.log(`Photo downloaded: ${originalImage.length} bytes`);
 
@@ -157,7 +172,9 @@ async function checkAndAnnounceBirthdays() {
 
       console.log(`Sending Telegram photo for ${member.name}...`);
 
-      await bot.api.sendPhoto({
+      // Telegram delivery is intentionally not retried automatically. A network
+      // failure can be ambiguous: Telegram may have accepted the post already.
+      telegramMessage = await bot.api.sendPhoto({
         chat_id: process.env.TELEGRAM_GROUP_ID,
         photo: new InputFile(compressedImage, {
           filename: `${member.name}.jpg`,
@@ -169,13 +186,52 @@ async function checkAndAnnounceBirthdays() {
 
       console.log(`Telegram announcement sent for ${member.name} ✅`);
 
-      await markAsAnnounced(member);
+      await retryOperation(
+        `Recording birthday announcement for ${member.name}`,
+        () => markAsAnnounced(member),
+      );
+
+      try {
+        await retryOperation(
+          `Recording successful delivery for ${member.name}`,
+          () =>
+            recordDeliveryAttempt(member, "sent", "telegram", {
+              telegramMessageId: telegramMessage.message_id,
+            }),
+        );
+      } catch (recordError) {
+        console.error(
+          `Could not record successful delivery for ${member.name} ❌:`,
+          recordError,
+        );
+      }
 
       console.log(`${member.name} marked as announced ✅`);
 
       announcedCount++;
     } catch (error) {
       console.error(`Failed to announce ${member.name} ❌:`, error);
+
+      try {
+        await retryOperation(
+          `Recording delivery failure for ${member.name}`,
+          () =>
+            recordDeliveryAttempt(
+              member,
+              telegramMessage ? "sent_unrecorded" : "failed",
+              telegramMessage ? "recording" : "birthday",
+              {
+                telegramMessageId: telegramMessage?.message_id,
+                error: error.message || "Unknown error",
+              },
+            ),
+        );
+      } catch (recordError) {
+        console.error(
+          `Could not record failed delivery for ${member.name} ❌:`,
+          recordError,
+        );
+      }
     }
   }
 

@@ -74,6 +74,14 @@ version. Do not include the secret in the scheduled URL.
 birthday check. Configure monitoring to alert if it reports a failed check or
 if the most recent completion is older than the expected schedule.
 
+## Delivery retries and records
+
+The bot retries temporary Google Drive and Google Sheets failures up to three
+times. It does not automatically retry a failed Telegram send because a timeout
+can be ambiguous and retrying could duplicate a public group message. Each
+successful or failed birthday delivery is recorded in a `Birthday Delivery
+Attempts` sheet that the bot creates automatically.
+
 # Local Development
 
 Install dependencies:
