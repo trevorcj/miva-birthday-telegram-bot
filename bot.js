@@ -8,6 +8,13 @@ const { getMembers } = require("./sheets");
 const { getTodaysBirthdays } = require("./birthdays");
 const { downloadDriveImage } = require("./drive");
 const { hasBeenAnnounced, markAsAnnounced } = require("./announcement");
+const {
+  getBearerToken,
+  isAdminUser,
+  isEnabled,
+  isPrivateChat,
+  isProductionChat,
+} = require("./config");
 
 const bot = new Bot(process.env.TELEGRAM_BOT_TOKEN);
 const app = express();
@@ -15,6 +22,43 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 let birthdayCheckRunning = false;
+let lastBirthdayCheck = {
+  completedAt: null,
+  error: null,
+  found: null,
+  announced: null,
+};
+
+function isProductionGroup(chatId) {
+  return isProductionChat(chatId, process.env.TELEGRAM_GROUP_ID);
+}
+
+async function requirePrivateAdmin(ctx) {
+  if (!isPrivateChat(ctx.chat)) {
+    console.warn("Ignored an operational command outside a private chat.");
+
+    return false;
+  }
+
+  if (!isAdminUser(ctx.from?.id)) {
+    console.warn(`Unauthorized admin command from Telegram user ${ctx.from?.id}.`);
+    await ctx.reply("You are not authorized to use this command.");
+
+    return false;
+  }
+
+  return true;
+}
+
+function recordSuccessfulBirthdayCheck(result) {
+  lastBirthdayCheck = {
+    completedAt: new Date().toISOString(),
+    error: null,
+    ...result,
+  };
+
+  return result;
+}
 
 // checks today's birthdays and announces them in the Telegram group
 
@@ -34,10 +78,10 @@ async function checkAndAnnounceBirthdays() {
   if (birthdays.length === 0) {
     console.log("No birthdays today.");
 
-    return {
+    return recordSuccessfulBirthdayCheck({
       found: 0,
       announced: 0,
-    };
+    });
   }
 
   const pendingBirthdays = [];
@@ -59,10 +103,10 @@ async function checkAndAnnounceBirthdays() {
   if (pendingBirthdays.length === 0) {
     console.log("All of today's birthdays have already been announced.");
 
-    return {
+    return recordSuccessfulBirthdayCheck({
       found: birthdays.length,
       announced: 0,
-    };
+    });
   }
 
   let announcedCount = 0;
@@ -143,19 +187,29 @@ async function checkAndAnnounceBirthdays() {
     `Announcements sent: ${announcedCount}/${pendingBirthdays.length}`,
   );
 
-  return {
+  const result = {
     found: birthdays.length,
     announced: announcedCount,
   };
+
+  return recordSuccessfulBirthdayCheck(result);
 }
 
 // commands
 
 bot.command("start", async (ctx) => {
+  if (!isPrivateChat(ctx.chat)) {
+    return;
+  }
+
   await ctx.reply("Hello! 👋 I'm the MIVA Charity & Volunteering Club bot.");
 });
 
 bot.command("whoami", async (ctx) => {
+  if (!isPrivateChat(ctx.chat)) {
+    return;
+  }
+
   console.log(ctx.from);
 
   await ctx.reply(
@@ -165,17 +219,47 @@ bot.command("whoami", async (ctx) => {
 });
 
 bot.command("chatid", async (ctx) => {
+  if (isProductionGroup(ctx.chat?.id)) {
+    console.warn("Ignored a chat ID request in the production group.");
+
+    return;
+  }
+
+  if (!isAdminUser(ctx.from?.id)) {
+    console.warn(`Unauthorized chat ID request from Telegram user ${ctx.from?.id}.`);
+
+    if (isPrivateChat(ctx.chat)) {
+      await ctx.reply("You are not authorized to use this command.");
+    }
+
+    return;
+  }
+
   await ctx.reply(`This chat's ID is: ${ctx.chat.id}`);
 
-  console.log("Chat:", ctx.chat);
+  console.log("Non-production chat ID requested.");
 });
 
 bot.command("testbirthday", async (ctx) => {
+  if (!(await requirePrivateAdmin(ctx))) {
+    return;
+  }
+
   try {
+    const testChatId = process.env.TELEGRAM_TEST_CHAT_ID;
+
+    if (!testChatId) {
+      throw new Error("TELEGRAM_TEST_CHAT_ID is not configured.");
+    }
+
+    if (isProductionGroup(testChatId)) {
+      throw new Error("The test chat must not be the production group.");
+    }
+
     await bot.api.sendMessage({
-      chat_id: process.env.TELEGRAM_GROUP_ID,
+      chat_id: testChatId,
       text:
-        "This is a test birthday announcement from the " +
+        "This is a test-only birthday announcement from the " +
         "MIVA Charity & Volunteering Club bot! 🎉🎂",
     });
 
@@ -190,6 +274,18 @@ bot.command("testbirthday", async (ctx) => {
 });
 
 bot.command("checkbirthdays", async (ctx) => {
+  if (!(await requirePrivateAdmin(ctx))) {
+    return;
+  }
+
+  if (!isEnabled(process.env.ALLOW_MANUAL_PRODUCTION_BIRTHDAY_CHECKS)) {
+    await ctx.reply(
+      "Manual production birthday checks are disabled. Use the scheduled job instead.",
+    );
+
+    return;
+  }
+
   if (birthdayCheckRunning) {
     await ctx.reply("A birthday check is already running. Please wait. ⏳");
 
@@ -219,6 +315,12 @@ bot.command("checkbirthdays", async (ctx) => {
   } catch (error) {
     console.error("Manual birthday check failed:", error);
 
+    lastBirthdayCheck = {
+      ...lastBirthdayCheck,
+      completedAt: new Date().toISOString(),
+      error: error.message || "Unknown error",
+    };
+
     await ctx.reply("Sorry, I couldn't check the birthdays right now.");
   } finally {
     birthdayCheckRunning = false;
@@ -231,10 +333,18 @@ app.get("/", (req, res) => {
   res.status(200).send("MIVA Birthday Bot is running.");
 });
 
+app.get("/healthz", (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    birthdayCheckRunning,
+    lastBirthdayCheck,
+  });
+});
+
 // cron endpoints
 
 app.get("/check-birthdays", async (req, res) => {
-  const cronSecret = req.query.key;
+  const cronSecret = getBearerToken(req.get("authorization"));
 
   if (!cronSecret || cronSecret !== process.env.CRON_SECRET) {
     console.warn("Unauthorized cron request.");
@@ -262,6 +372,12 @@ app.get("/check-birthdays", async (req, res) => {
     return res.status(200).send("OK");
   } catch (error) {
     console.error("Cron birthday check failed:", error);
+
+    lastBirthdayCheck = {
+      ...lastBirthdayCheck,
+      completedAt: new Date().toISOString(),
+      error: error.message || "Unknown error",
+    };
 
     return res.status(500).send("Birthday check failed.");
   } finally {
